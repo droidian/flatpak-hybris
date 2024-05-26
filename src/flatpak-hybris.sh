@@ -53,6 +53,7 @@ if [[ "$@" =~ 'run ' ]]; then
 		--env=HYBRIS_LINKER_DIR=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris/linker \
 		--env=HYBRIS_LD_LIBRARY_PATH=${HYBRIS_LD_LIBRARY_PATH} \
 		--env=LD_LIBRARY_PATH=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris-egl:/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR} \
+		--env=LD_PRELOAD="${LD_PRELOAD}" \
 		$@
 else
 	# Pass-through to the real executable
