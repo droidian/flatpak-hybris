@@ -14,6 +14,7 @@ Pre-Depends: flatpak,
 Depends: ${misc:Depends},
          flatpak-extension-gl-hybris,
          libc-bin,
+         mesa-utils,
 Recommends: flatpak-extension-gl-hybris-tls-padding
 Description: Simple wrapper that prepares flatpaks for running with hybris extensions
  This package contains a simple wrapper that prepares flatpaks for running

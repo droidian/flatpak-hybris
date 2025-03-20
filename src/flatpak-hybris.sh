@@ -38,9 +38,20 @@ fi
 
 if [[ "$@" =~ 'run ' ]]; then
 	# Flatpak should be ran, ensure we attach our own arguments
+	shift
 
 	# Ensure we use the hybris extension
 	export FLATPAK_GL_DRIVERS="hybris"
+
+	# 2025-03-20: blacklist ngl/gl renderer on GNOME 48 runtime on Adreno
+	# Do only 48 for now, let's evaluate in future
+	if [ "${FLATPAK_HYBRIS_SKIP_BLACKLIST}" != "1" ]; then
+		app=$(echo " $@ " | grep -oP ' [^- ].+? ')
+		runtime="$(flatpak info ${app} --show-runtime)"
+		if [[ "${runtime}" =~ org.gnome.Platform/.*?/48 ]] && eglinfo -a gles -B -p wayland | grep -q Adreno; then
+			GSK_RENDERER="cairo"
+		fi
+	fi
 
 	exec ${FLATPAK} \
 		--filesystem=/system:ro \
@@ -54,7 +65,8 @@ if [[ "$@" =~ 'run ' ]]; then
 		--env=HYBRIS_LD_LIBRARY_PATH=${HYBRIS_LD_LIBRARY_PATH} \
 		--env=LD_LIBRARY_PATH=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris-egl:/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR} \
 		--env=LD_PRELOAD="${LD_PRELOAD}" \
-		$@
+		--env=GSK_RENDERER="${GSK_RENDERER}" \
+		run $@
 else
 	# Pass-through to the real executable
 	exec ${FLATPAK} $@
