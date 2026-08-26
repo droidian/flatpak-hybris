@@ -1,11 +1,13 @@
 #!/bin/bash
 
-FLATPAK="/usr/bin/flatpak.real"
+FLATPAK="${FLATPAK_REAL:-/usr/bin/flatpak.real}"
 
 error() {
-	echo "E: $@" >&2
+	echo "E: $*" >&2
 	exit 1
 }
+
+[ -x "$FLATPAK" ] || error "Unable to execute the real Flatpak binary: $FLATPAK"
 
 # Get triplet
 case "$(dpkg --print-architecture)" in
@@ -27,47 +29,73 @@ case "$(dpkg --print-architecture)" in
 esac
 
 # Get libdir
-if [ $(getconf LONG_BIT) == 32 ]; then
+if [ "$(getconf LONG_BIT)" = 32 ]; then
 	LIBDIR="lib"
 else
 	LIBDIR="lib64"
 fi
 
-[ -z "${HYBRIS_LD_LIBRARY_PATH}" ] && \
+[ -z "${HYBRIS_LD_LIBRARY_PATH:-}" ] && \
 	HYBRIS_LD_LIBRARY_PATH="/system/${LIBDIR}:/vendor/${LIBDIR}:/odm/${LIBDIR}"
 
-if [[ "$@" =~ 'run ' ]]; then
-	# Flatpak should be ran, ensure we attach our own arguments
-	shift
+# Select the hybris extension consistently for both diagnostics and app
+# launches, while allowing an explicit administrator override.
+export FLATPAK_GL_DRIVERS="${FLATPAK_GL_DRIVERS:-hybris}"
 
-	# Ensure we use the hybris extension
-	export FLATPAK_GL_DRIVERS="hybris"
+args=("$@")
+command_index=-1
+for index in "${!args[@]}"; do
+	case "${args[$index]}" in
+		-*) ;;
+		*) command_index=$index; break ;;
+	esac
+done
+
+if (( command_index >= 0 )) && [ "${args[$command_index]}" = "run" ]; then
+	run_args=("${args[@]:command_index + 1}")
+	runtime=""
+
+	# Ask Flatpak which non-option token is an installed ref instead of
+	# duplicating the evolving `flatpak run` option parser. This handles both
+	# --option=value and --option value without modifying argv.
+	for candidate in "${run_args[@]}"; do
+		case "$candidate" in
+			-*) continue ;;
+		esac
+		candidate_runtime=$("$FLATPAK" info "$candidate" --show-runtime 2>/dev/null || true)
+		if [ -n "$candidate_runtime" ]; then
+			runtime="$candidate_runtime"
+			break
+		fi
+	done
 
 	# 2025-03-20: blacklist ngl/gl renderer on GNOME 48 runtime on Adreno
 	# Do only 48 for now, let's evaluate in future
-	if [ "${FLATPAK_HYBRIS_SKIP_BLACKLIST}" != "1" ]; then
-		app=$(echo " $@ " | grep -oP ' [^- ].+? ')
-		runtime="$(flatpak info ${app} --show-runtime)"
-		if [[ "${runtime}" =~ org.gnome.Platform/.*?/48 ]] && eglinfo -a gles -B -p wayland | grep -q Adreno; then
-			GSK_RENDERER="cairo"
-		fi
+	gsk_renderer="${GSK_RENDERER:-}"
+	if [ "${FLATPAK_HYBRIS_SKIP_BLACKLIST:-0}" != "1" ] && \
+	   [[ "$runtime" =~ ^org\.gnome\.Platform/.*/48$ ]] && \
+	   command -v eglinfo >/dev/null 2>&1 && \
+	   eglinfo -a gles -B -p wayland 2>/dev/null | grep -q Adreno; then
+		gsk_renderer="cairo"
 	fi
 
-	exec ${FLATPAK} \
+	before_run=("${args[@]:0:command_index + 1}")
+	after_run=("${args[@]:command_index + 1}")
+	exec "$FLATPAK" \
+		"${before_run[@]}" \
 		--filesystem=/system:ro \
 		--filesystem=/vendor:ro \
 		--filesystem=/odm:ro \
 		--filesystem=/apex:ro \
 		--filesystem=/android:ro \
 		--device=all \
-		--env=HYBRIS_EGLPLATFORM_DIR=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris \
-		--env=HYBRIS_LINKER_DIR=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris/linker \
-		--env=HYBRIS_LD_LIBRARY_PATH=${HYBRIS_LD_LIBRARY_PATH} \
-		--env=LD_LIBRARY_PATH=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris-egl:/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR} \
-		--env=LD_PRELOAD="${LD_PRELOAD}" \
-		--env=GSK_RENDERER="${GSK_RENDERER}" \
-		run $@
-else
-	# Pass-through to the real executable
-	exec ${FLATPAK} $@
+		--env="HYBRIS_EGLPLATFORM_DIR=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris" \
+		--env="HYBRIS_LINKER_DIR=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris/linker" \
+		--env="HYBRIS_LD_LIBRARY_PATH=${HYBRIS_LD_LIBRARY_PATH}" \
+		--env="LD_LIBRARY_PATH=/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}/libhybris-egl:/usr/lib/${TRIPLET}/GL/hybris/${LIBDIR}" \
+		--env="LD_PRELOAD=${LD_PRELOAD:-}" \
+		--env="GSK_RENDERER=${gsk_renderer}" \
+		"${after_run[@]}"
 fi
+
+exec "$FLATPAK" "${args[@]}"
