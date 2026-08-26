@@ -6,4 +6,7 @@ build:
 install:
 	make -C src/ install
 
-.PHONY: build install
+test:
+	bash tests/test-wrapper.sh
+
+.PHONY: build install test
